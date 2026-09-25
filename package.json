@@ -1,0 +1,421 @@
+{
+  "name": "dotnet-counters-dashboard",
+  "displayName": ".NET Counters Dashboard",
+  "description": "Real-time .NET performance monitoring with dotnet-counters: CPU, memory and garbage collection timeline, time-interval analysis, watched projects, and data export and import.",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#141a2b",
+    "theme": "dark"
+  },
+  "version": "0.1.0",
+  "publisher": "vmfventura",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vmfventura/dotnet-counters-dashboard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vmfventura/dotnet-counters-dashboard/issues"
+  },
+  "homepage": "https://github.com/vmfventura/dotnet-counters-dashboard#readme",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Debuggers",
+    "Other"
+  ],
+  "keywords": [
+    "dotnet",
+    ".NET",
+    "dotnet-counters",
+    "performance",
+    "profiling",
+    "monitoring",
+    "diagnostics",
+    "garbage collection",
+    "memory",
+    "cpu"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dotnetCounters",
+          "title": ".NET Counters",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "dotnetCounters": [
+        {
+          "id": "dotnetCounters.watches",
+          "name": "Watched Projects"
+        },
+        {
+          "id": "dotnetCounters.processes",
+          "name": ".NET Processes"
+        },
+        {
+          "id": "dotnetCounters.sessions",
+          "name": "Monitoring Sessions"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "dotnetCounters.watches",
+        "contents": "Not watching any project.\nWatched projects are saved for this workspace: the extension waits for their process to start and attaches automatically, every time it runs.\n[Watch a project](command:dotnetCounters.watchProject)"
+      },
+      {
+        "view": "dotnetCounters.processes",
+        "contents": "No .NET processes found by dotnet-counters.\n[Refresh](command:dotnetCounters.refresh)\n[Monitor workspace project](command:dotnetCounters.monitorProject)"
+      },
+      {
+        "view": "dotnetCounters.sessions",
+        "contents": "No monitoring sessions yet.\n[Monitor workspace project](command:dotnetCounters.monitorProject)\n[Import exported data](command:dotnetCounters.importData)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "dotnetCounters.refresh",
+        "title": "Refresh Processes",
+        "category": ".NET Counters",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "dotnetCounters.monitorProject",
+        "title": "Monitor Workspace Project",
+        "category": ".NET Counters",
+        "icon": "$(target)"
+      },
+      {
+        "command": "dotnetCounters.monitorByName",
+        "title": "Monitor by Process Name…",
+        "category": ".NET Counters",
+        "icon": "$(search)"
+      },
+      {
+        "command": "dotnetCounters.importData",
+        "title": "Import Data…",
+        "category": ".NET Counters",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "dotnetCounters.monitorProcess",
+        "title": "Monitor Process",
+        "category": ".NET Counters",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "dotnetCounters.openSession",
+        "title": "Open Dashboard",
+        "category": ".NET Counters",
+        "icon": "$(graph-line)"
+      },
+      {
+        "command": "dotnetCounters.stopSession",
+        "title": "Stop Session",
+        "category": ".NET Counters",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "dotnetCounters.removeSession",
+        "title": "Remove Session",
+        "category": ".NET Counters",
+        "icon": "$(close)"
+      },
+      {
+        "command": "dotnetCounters.exportSession",
+        "title": "Export Data…",
+        "category": ".NET Counters",
+        "icon": "$(export)"
+      },
+      {
+        "command": "dotnetCounters.watchProject",
+        "title": "Watch Project…",
+        "icon": "$(eye)",
+        "category": ".NET Counters"
+      },
+      {
+        "command": "dotnetCounters.watchProcess",
+        "title": "Watch (attach on every start)",
+        "icon": "$(eye)",
+        "category": ".NET Counters"
+      },
+      {
+        "command": "dotnetCounters.unwatch",
+        "title": "Stop Watching",
+        "icon": "$(close)",
+        "category": ".NET Counters"
+      },
+      {
+        "command": "dotnetCounters.pauseWatch",
+        "title": "Pause Watching",
+        "icon": "$(debug-pause)",
+        "category": ".NET Counters"
+      },
+      {
+        "command": "dotnetCounters.resumeWatch",
+        "title": "Resume Watching",
+        "icon": "$(debug-start)",
+        "category": ".NET Counters"
+      },
+      {
+        "command": "dotnetCounters.openWatch",
+        "title": "Open Dashboard",
+        "icon": "$(graph-line)",
+        "category": ".NET Counters"
+      },
+      {
+        "command": "dotnetCounters.addWatch",
+        "title": "Add Watch",
+        "category": ".NET Counters"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "dotnetCounters.monitorProject",
+          "when": "view == dotnetCounters.processes",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dotnetCounters.monitorByName",
+          "when": "view == dotnetCounters.processes",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dotnetCounters.refresh",
+          "when": "view == dotnetCounters.processes",
+          "group": "navigation@3"
+        },
+        {
+          "command": "dotnetCounters.importData",
+          "when": "view == dotnetCounters.sessions",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dotnetCounters.importData",
+          "when": "view == dotnetCounters.processes",
+          "group": "navigation@4"
+        },
+        {
+          "command": "dotnetCounters.watchProject",
+          "when": "view == dotnetCounters.watches",
+          "group": "navigation@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "dotnetCounters.monitorProcess",
+          "when": "view == dotnetCounters.processes && viewItem =~ /^process/",
+          "group": "inline"
+        },
+        {
+          "command": "dotnetCounters.openSession",
+          "when": "view == dotnetCounters.sessions && viewItem =~ /^session/",
+          "group": "inline@1"
+        },
+        {
+          "command": "dotnetCounters.exportSession",
+          "when": "view == dotnetCounters.sessions && viewItem =~ /^session/",
+          "group": "inline@2"
+        },
+        {
+          "command": "dotnetCounters.stopSession",
+          "when": "view == dotnetCounters.sessions && viewItem == session.running",
+          "group": "inline@3"
+        },
+        {
+          "command": "dotnetCounters.removeSession",
+          "when": "view == dotnetCounters.sessions && viewItem == session.stopped",
+          "group": "inline@3"
+        },
+        {
+          "command": "dotnetCounters.watchProcess",
+          "when": "view == dotnetCounters.processes && viewItem =~ /^process/",
+          "group": "inline@0"
+        },
+        {
+          "command": "dotnetCounters.pauseWatch",
+          "when": "view == dotnetCounters.watches && viewItem == watch.enabled",
+          "group": "inline@1"
+        },
+        {
+          "command": "dotnetCounters.resumeWatch",
+          "when": "view == dotnetCounters.watches && viewItem == watch.paused",
+          "group": "inline@1"
+        },
+        {
+          "command": "dotnetCounters.unwatch",
+          "when": "view == dotnetCounters.watches && viewItem =~ /^watch/",
+          "group": "inline@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "dotnetCounters.monitorProcess",
+          "when": "false"
+        },
+        {
+          "command": "dotnetCounters.openSession",
+          "when": "false"
+        },
+        {
+          "command": "dotnetCounters.stopSession",
+          "when": "false"
+        },
+        {
+          "command": "dotnetCounters.removeSession",
+          "when": "false"
+        },
+        {
+          "command": "dotnetCounters.exportSession",
+          "when": "false"
+        },
+        {
+          "command": "dotnetCounters.watchProcess",
+          "when": "false"
+        },
+        {
+          "command": "dotnetCounters.unwatch",
+          "when": "false"
+        },
+        {
+          "command": "dotnetCounters.pauseWatch",
+          "when": "false"
+        },
+        {
+          "command": "dotnetCounters.resumeWatch",
+          "when": "false"
+        },
+        {
+          "command": "dotnetCounters.openWatch",
+          "when": "false"
+        },
+        {
+          "command": "dotnetCounters.addWatch",
+          "when": "false"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "dotnetCounters.importData",
+          "when": "resourceExtname == .csv || resourceExtname == .json",
+          "group": "navigation@90"
+        }
+      ]
+    },
+    "configuration": {
+      "title": ".NET Counters Dashboard",
+      "properties": {
+        "dotnetCounters.toolPath": {
+          "type": "string",
+          "default": "dotnet-counters",
+          "description": "Path to the dotnet-counters executable (defaults to PATH and ~/.dotnet/tools)."
+        },
+        "dotnetCounters.counters": {
+          "type": "string",
+          "default": "System.Runtime",
+          "description": "Providers/counters passed to --counters (e.g. \"System.Runtime,Microsoft.AspNetCore.Hosting\")."
+        },
+        "dotnetCounters.refreshInterval": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "description": "Collection interval in seconds (--refresh-interval)."
+        },
+        "dotnetCounters.projectName": {
+          "type": "string",
+          "default": "",
+          "description": "Process name to look for. If empty, the AssemblyName (or file name) of the workspace .csproj files is used."
+        },
+        "dotnetCounters.waitForProcessSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "description": "Maximum time (seconds) to wait for the project's process to appear in dotnet-counters ps."
+        },
+        "dotnetCounters.theme": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "light",
+            "dark"
+          ],
+          "enumDescriptions": [
+            "Follow the VS Code theme",
+            "Always light",
+            "Always dark"
+          ],
+          "default": "auto",
+          "description": "Theme of the charts dashboard."
+        },
+        "dotnetCounters.hotspotCpuPercent": {
+          "type": "number",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Timeline: CPU % at or above which a sample is marked as a performance hotspot."
+        },
+        "dotnetCounters.freezeGcPausePercent": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Timeline: % of time paused in GC at or above which a sample is marked as a possible freeze."
+        },
+        "dotnetCounters.freezeLockContentionsPerSecond": {
+          "type": "number",
+          "default": 100,
+          "minimum": 1,
+          "description": "Timeline: lock contentions per second at or above which a sample is marked as a possible freeze."
+        },
+        "dotnetCounters.highGcCollectionsPerSecond": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "description": "Timeline: garbage collections per second (all generations) at or above which GC activity is marked as high."
+        },
+        "dotnetCounters.maxHistoryPoints": {
+          "type": "number",
+          "default": 3600,
+          "minimum": 60,
+          "description": "Maximum number of samples kept in memory for the charts (the full raw CSV is still available for export)."
+        },
+        "dotnetCounters.watchPollSeconds": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "description": "Watched projects: how often (seconds) to look for their process in dotnet-counters ps."
+        },
+        "dotnetCounters.watchOpenDashboard": {
+          "type": "boolean",
+          "default": true,
+          "description": "Watched projects: open the dashboard automatically (without stealing focus) when the process starts. When off, the session is still recorded in Monitoring Sessions."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package --no-rewrite-relative-links --allow-missing-repository",
+    "package:marketplace": "vsce package",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.4.0"
+  }
+}

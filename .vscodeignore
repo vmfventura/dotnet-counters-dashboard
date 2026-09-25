@@ -1,0 +1,11 @@
+.vscode/**
+src/**
+test/**
+node_modules/**
+tsconfig.json
+**/*.map
+*.vsix
+sample/**
+CONTRIBUTING.md
+images/**
+.github/**
