@@ -2,23 +2,14 @@ import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 import { DERIVED_LABELS } from './metrics';
 import { CounterSession, exportSession, TimeRange } from './session';
-
-/** Timeline marker thresholds, read from the settings. */
-function thresholds() {
-  const cfg = vscode.workspace.getConfiguration('dotnetCounters');
-  return {
-    hotspotCpuPercent: cfg.get<number>('hotspotCpuPercent', 50),
-    freezeGcPausePercent: cfg.get<number>('freezeGcPausePercent', 10),
-    freezeLockContentionsPerSecond: cfg.get<number>('freezeLockContentionsPerSecond', 100),
-    highGcCollectionsPerSecond: cfg.get<number>('highGcCollectionsPerSecond', 20),
-  };
-}
+import { SessionSnapshot } from './sessionSnapshot';
 
 /** Webview panel with the charts of a session. One panel per session. */
 export class DashboardPanel implements vscode.Disposable {
   private static readonly panels = new Map<number, DashboardPanel>();
   private readonly disposables: vscode.Disposable[] = [];
   private disposed = false;
+  private frozen: SessionSnapshot | undefined;
 
   /** @param preserveFocus open without stealing focus (used when a watched project attaches automatically). */
   static show(extensionUri: vscode.Uri, session: CounterSession, onRestart: (s: CounterSession) => void, preserveFocus = false): void {
@@ -54,7 +45,7 @@ export class DashboardPanel implements vscode.Disposable {
       this.panel.onDidDispose(() => this.dispose()),
       this.panel.webview.onDidReceiveMessage((m) => this.onMessage(m, onRestart)),
       session.onSample(({ derived, raw }) => {
-        void this.panel.webview.postMessage({ type: 'sample', derived, counters: raw.counters });
+        void this.panel.webview.postMessage({ type: 'sample', derived, counters: raw.counters, retainedCount: session.samples.length, sampleCount: session.sampleCount });
       }),
       session.onStateChange((s) => {
         void this.panel.webview.postMessage({ type: 'state', state: s.state, error: s.error, endedAt: s.endedAt });
@@ -62,7 +53,7 @@ export class DashboardPanel implements vscode.Disposable {
       // keep every open panel in sync with the setting
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('dotnetCounters')) {
-          void this.panel.webview.postMessage({ type: 'thresholds', thresholds: thresholds() });
+          void this.panel.webview.postMessage({ type: 'thresholds', thresholds: this.session.thresholds });
         }
         if (e.affectsConfiguration('dotnetCounters.theme')) {
           const theme = vscode.workspace.getConfiguration('dotnetCounters').get<string>('theme', 'auto');
@@ -72,7 +63,7 @@ export class DashboardPanel implements vscode.Disposable {
     );
   }
 
-  private async onMessage(m: { type: string; format?: 'csv' | 'json' | 'raw'; dataUrl?: string; theme?: string; range?: TimeRange; analysis?: unknown }, onRestart: (s: CounterSession) => void): Promise<void> {
+  private async onMessage(m: { type: string; format?: 'csv' | 'json' | 'raw'; dataUrl?: string; theme?: string; range?: TimeRange; expectedSamples?: number }, onRestart: (s: CounterSession) => void): Promise<void> {
     switch (m.type) {
       case 'ready':
         void this.panel.webview.postMessage({
@@ -88,12 +79,13 @@ export class DashboardPanel implements vscode.Disposable {
           state: this.session.state,
           error: this.session.error,
           labels: DERIVED_LABELS,
-          thresholds: thresholds(),
+          thresholds: this.session.thresholds,
           refreshInterval: this.session.refreshInterval,
           imported: this.session.imported ? { file: this.session.imported.file, format: this.session.imported.format } : undefined,
           hasRawCsv: this.session.hasRawCsv,
           theme: vscode.workspace.getConfiguration('dotnetCounters').get<string>('theme', 'auto'),
           samples: this.session.samples,
+          sampleCount: this.session.sampleCount,
           counters: [...this.session.latest.values()],
         });
         void this.session.processInfo.then((t) => this.panel.webview.postMessage({ type: 'processInfo', processStartedAt: t }));
@@ -106,9 +98,25 @@ export class DashboardPanel implements vscode.Disposable {
           onRestart(this.session);
         }
         break;
-      case 'export':
-        await exportSession(this.session, m.format, m.range, m.analysis);
+      case 'pause':
+        this.frozen = this.session.createSnapshot();
+        void this.panel.webview.postMessage({ type: 'paused', samples: this.frozen.data.samples });
         break;
+      case 'resume':
+        this.frozen = undefined;
+        break;
+      case 'export': {
+        if (!m.range || !Number.isFinite(m.range.from) || !Number.isFinite(m.range.to) || m.range.from > m.range.to) {
+          return;
+        }
+        const snapshot = this.session.createSnapshot(m.range, this.frozen);
+        if (!snapshot.data.samples.length || snapshot.data.samples.length !== m.expectedSamples) {
+          void vscode.window.showWarningMessage('The selected data is no longer retained. Refresh the selection or pause the dashboard before exporting.');
+          return;
+        }
+        await exportSession(this.session, m.format, m.range, snapshot);
+        break;
+      }
       case 'setTheme':
         await vscode.workspace.getConfiguration('dotnetCounters').update('theme', m.theme, vscode.ConfigurationTarget.Global);
         break;
@@ -137,6 +145,7 @@ export class DashboardPanel implements vscode.Disposable {
   private html(): string {
     const webview = this.panel.webview;
     const media = vscode.Uri.joinPath(this.extensionUri, 'media');
+    const analysisScript = webview.asWebviewUri(vscode.Uri.joinPath(media, 'sessionAnalysis.js'));
     const script = webview.asWebviewUri(vscode.Uri.joinPath(media, 'dashboard.js'));
     const style = webview.asWebviewUri(vscode.Uri.joinPath(media, 'dashboard.css'));
     const nonce = crypto.randomBytes(16).toString('base64');
@@ -207,6 +216,7 @@ export class DashboardPanel implements vscode.Disposable {
       <span class="hint" id="selInfo">Drag on the timeline to select a time interval</span>
     </div>
     <div class="timeline-legend" id="timelineLegend"></div>
+    <div class="hint" id="historyInfo" hidden></div>
     <canvas id="timeline" role="img" aria-label="Timeline with CPU, GC and memory lanes. Drag to select a time interval." tabindex="0"></canvas>
   </section>
 
@@ -238,6 +248,7 @@ export class DashboardPanel implements vscode.Disposable {
   <!-- inside .viz-root so it inherits the series color variables -->
   <div class="tooltip" id="tooltip" hidden></div>
 </div>
+<script nonce="${nonce}" src="${analysisScript}"></script>
 <script nonce="${nonce}" src="${script}"></script>
 </body>
 </html>`;

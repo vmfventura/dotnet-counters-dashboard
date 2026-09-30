@@ -1,9 +1,12 @@
 import * as fs from 'fs';
 import * as vscode from 'vscode';
-import { CounterCollector, DotnetProcess, parseCsvLine, parseStamp, RawSample } from './countersCli';
-import type { ImportedData } from './importer';
+import { CounterCollector, DotnetProcess, parseCsvLine, RawSample } from './countersCli';
+import { ImportedData, makeStampParser } from './importer';
 import { getProcessStartTime } from './processInfo';
-import { counterKey, DERIVED_KEYS, DERIVED_LABELS, DerivedSample, MetricDeriver } from './metrics';
+import { counterKey, DerivedSample, MetricDeriver } from './metrics';
+import { analysisThresholds } from './analysisConfig';
+import { SessionSnapshot } from './sessionSnapshot';
+import type { Thresholds } from '../media/sessionAnalysis';
 
 export interface LatestCounter {
   provider: string;
@@ -44,6 +47,7 @@ export class CounterSession implements vscode.Disposable {
 
   private readonly collector: CounterCollector | undefined;
   private readonly deriver = new MetricDeriver();
+  private readonly configuredRefreshInterval: number;
   private readonly _onSample = new vscode.EventEmitter<{ derived: DerivedSample; raw: RawSample }>();
   readonly onSample = this._onSample.event;
   private readonly _onStateChange = new vscode.EventEmitter<CounterSession>();
@@ -51,10 +55,13 @@ export class CounterSession implements vscode.Disposable {
 
   constructor(readonly proc: DotnetProcess, readonly projectName: string | undefined, readonly imported?: ImportedData) {
     const cfg = vscode.workspace.getConfiguration('dotnetCounters');
+    this.configuredRefreshInterval = cfg.get<number>('refreshInterval', 1);
     if (imported) {
       this.startedAt = imported.startedAt;
       this.state = 'stopped';
-      this.samples.push(...imported.samples);
+      for (const sample of imported.samples) {
+        this.samples.push(sample);
+      }
       this.sampleCount = imported.samples.length;
       for (const c of imported.latest) {
         this.latest.set(counterKey(c), { ...c });
@@ -71,7 +78,7 @@ export class CounterSession implements vscode.Disposable {
       .then((t) => t ?? new Promise<number | undefined>((r) => setTimeout(() => r(lookup()), 5000)))
       .then((t) => (this.processStartedAt = t));
     const maxPoints = cfg.get<number>('maxHistoryPoints', 3600);
-    this.collector = new CounterCollector(proc.pid, cfg.get<string>('counters', 'System.Runtime'), cfg.get<number>('refreshInterval', 1));
+    this.collector = new CounterCollector(proc.pid, cfg.get<string>('counters', 'System.Runtime'), this.configuredRefreshInterval);
     this.collector.onSample((raw) => {
       const derived = this.deriver.derive(raw);
       this.sampleCount++;
@@ -109,7 +116,10 @@ export class CounterSession implements vscode.Disposable {
   /** Sampling interval in seconds (configured for live sessions, inferred for imported files). */
   get refreshInterval(): number {
     if (!this.imported) {
-      return vscode.workspace.getConfiguration('dotnetCounters').get<number>('refreshInterval', 1);
+      return this.configuredRefreshInterval;
+    }
+    if (this.imported.refreshInterval) {
+      return this.imported.refreshInterval;
     }
     const d = this.samples.slice(1, 2001).map((s, i) => s.time - this.samples[i].time).filter((x) => x > 0).sort((a, b) => a - b);
     return d.length ? Math.max(0.1, d[Math.floor(d.length / 2)] / 1000) : 1;
@@ -126,29 +136,32 @@ export class CounterSession implements vscode.Disposable {
     return range ? this.samples.filter((s) => s.time >= range.from && s.time <= range.to) : this.samples;
   }
 
-  /** CSV of the normalized metrics (one row per sample). */
-  toDerivedCsv(range?: TimeRange): string {
-    const header = ['timestamp', ...DERIVED_KEYS.map((k) => DERIVED_LABELS[k])];
-    const rows = this.samplesIn(range).map((s) => [
-      new Date(s.time).toISOString(),
-      ...DERIVED_KEYS.map((k) => (s[k] === null ? '' : String(round(s[k] as number)))),
-    ]);
-    return [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\n') + '\n';
+  get thresholds(): Thresholds {
+    return this.imported?.thresholds ?? analysisThresholds();
   }
 
-  toJson(range?: TimeRange, analysis?: unknown): string {
-    return JSON.stringify({
+  createSnapshot(range?: TimeRange, source?: SessionSnapshot): SessionSnapshot {
+    const samples = source?.data.samples ?? this.samples;
+    return new SessionSnapshot({
       process: this.proc,
       project: this.projectName,
-      startedAt: new Date(this.startedAt).toISOString(),
-      processStartedAt: this.processStartedAt ? new Date(this.processStartedAt).toISOString() : undefined,
-      exportedAt: new Date().toISOString(),
-      range: range ? { from: new Date(range.from).toISOString(), to: new Date(range.to).toISOString() } : undefined,
-      analysis,
-      metrics: DERIVED_LABELS,
-      samples: this.samplesIn(range).map((s) => ({ ...s, time: new Date(s.time).toISOString() })),
-      latestCounters: [...this.latest.values()],
-    }, null, 2);
+      startedAt: this.startedAt,
+      processStartedAt: this.processStartedAt,
+      refreshInterval: this.refreshInterval,
+      thresholds: this.thresholds,
+      range,
+      samples: range ? samples.filter((s) => s.time >= range.from && s.time <= range.to) : samples,
+      latestCounters: source?.data.latestCounters ?? [...this.latest.values()],
+    });
+  }
+
+  /** CSV of the normalized metrics (one row per sample). */
+  toDerivedCsv(range?: TimeRange): string {
+    return this.createSnapshot(range).toDerivedCsv();
+  }
+
+  toJson(range?: TimeRange): string {
+    return this.createSnapshot(range).toJson();
   }
 
   /** Raw content written by dotnet-counters (all counters), optionally limited to a time range. */
@@ -158,9 +171,9 @@ export class CounterSession implements vscode.Disposable {
     if (!range) {
       return text;
     }
-    const now = Date.now();
-    const toTime = this.imported ? this.imported.stampToTime : (stamp: string) => parseStamp(stamp, now);
     const lines = text.split(/\r?\n/);
+    const stamps = lines.map(parseCsvLine).flatMap((p) => p ? [p.stamp] : []);
+    const toTime = this.imported ? this.imported.stampToTime : makeStampParser(stamps);
     const kept = lines.filter((line, i) => {
       if (i === 0) {
         return true; // header
@@ -182,16 +195,9 @@ export class CounterSession implements vscode.Disposable {
   }
 }
 
-function round(v: number): number {
-  return Math.round(v * 1000) / 1000;
-}
-
-function csvCell(v: string): string {
-  return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
-}
-
 /** Saves a session's data to a file chosen by the user. */
-export async function exportSession(session: CounterSession, format?: 'csv' | 'json' | 'raw', range?: TimeRange, analysis?: unknown): Promise<void> {
+export async function exportSession(session: CounterSession, format?: 'csv' | 'json' | 'raw', range?: TimeRange, snapshot = session.createSnapshot(range)): Promise<void> {
+  const rawCsv = !format || format === 'raw' ? session.readRawCsv(range) : undefined;
   if (!format) {
     const pick = await vscode.window.showQuickPick([
       { label: 'CSV — normalized metrics', description: 'CPU %, memory %, GC, …', format: 'csv' as const },
@@ -214,6 +220,7 @@ export async function exportSession(session: CounterSession, format?: 'csv' | 'j
   const suffix = (range ? `-${hhmmss(range.from)}-${hhmmss(range.to)}` : '') + (format === 'raw' ? '-raw' : '');
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
   const defaultUri = folder ? vscode.Uri.joinPath(folder, `${base}${suffix}.${ext}`) : undefined;
+  const content = format === 'json' ? snapshot.toJson() : format === 'raw' ? rawCsv ?? '' : snapshot.toDerivedCsv();
   const target = await vscode.window.showSaveDialog({
     defaultUri,
     filters: format === 'json' ? { JSON: ['json'] } : { CSV: ['csv'] },
@@ -222,7 +229,6 @@ export async function exportSession(session: CounterSession, format?: 'csv' | 'j
   if (!target) {
     return;
   }
-  const content = format === 'json' ? session.toJson(range, analysis) : format === 'raw' ? session.readRawCsv(range) : session.toDerivedCsv(range);
   await vscode.workspace.fs.writeFile(target, Buffer.from(content, 'utf8'));
   const open = await vscode.window.showInformationMessage(`Data exported to ${target.fsPath}`, 'Open');
   if (open) {

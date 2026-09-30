@@ -3,7 +3,6 @@
   const vscode = acquireVsCodeApi();
   const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
 
-  const MAX_POINTS = 200000;
   /** Set when the session was loaded from a file (read-only). @type {{ file: string, format: string } | null} */
   let imported = null;
   /** When the monitored process started / when monitoring ended (ms epoch). */
@@ -20,8 +19,9 @@
   const counters = new Map();
   let rangeSeconds = 60;
   let paused = false;
+  let sampleCount = 0;
   let refreshMs = 1000;
-  let thresholds = { hotspotCpuPercent: 50, freezeGcPausePercent: 10, freezeLockContentionsPerSecond: 100, highGcCollectionsPerSecond: 20 };
+  let thresholds = { ...SessionAnalysis.DEFAULT_THRESHOLDS };
   /** Interval drawn on the timeline. @type {{ from: number, to: number } | null} */
   let selection = null;
   /** Interval being analyzed (drives tiles, charts and the analysis section). @type {{ from: number, to: number, live?: boolean } | null} */
@@ -73,7 +73,7 @@
       ],
       minMax: 1,
     },
-    { id: 'gcpause', title: 'GC pause time', unit: '%', digits: 2, series: [{ key: 'gcPausePercent', label: 'GC pause' }], minMax: 1 },
+    { id: 'gcpause', title: 'GC reported time', unit: '%', digits: 2, series: [{ key: 'gcPausePercent', label: 'GC reported time' }], minMax: 1 },
     { id: 'alloc', title: 'Allocation rate', unit: 'MB/s', digits: 2, series: [{ key: 'allocMBps', label: 'Allocation' }], minMax: 1 },
     { id: 'tpwork', title: 'ThreadPool — completed work items', unit: '/s', digits: 0, series: [{ key: 'threadPoolWorkItems', label: 'Work items' }], minMax: 5 },
     {
@@ -100,7 +100,7 @@
     { key: 'workingSetMB', label: 'Working set', unit: 'MB', digits: 0 },
     { key: 'gcHeapMB', label: 'GC heap', unit: 'MB', digits: 0 },
     { key: 'gcTotal', label: 'GCs', unit: '/s', digits: 1 },
-    { key: 'gcPausePercent', label: 'Time in GC', unit: '%', digits: 2 },
+    { key: 'gcPausePercent', label: 'GC reported time', unit: '%', digits: 2 },
   ];
 
   function cssVar(name) {
@@ -160,6 +160,15 @@
 
     setData(view) {
       this.view = view;
+      if (this.def.id === 'gcpause') {
+        this.def.title = SessionAnalysis.gcLabel('pause', SessionAnalysis.semanticsOf(view, 'pause', ['gcPausePercent']));
+        this.def.series[0].label = this.def.title;
+      } else if (this.def.id === 'gc') {
+        this.def.title = SessionAnalysis.gcLabel('collections', SessionAnalysis.semanticsOf(view, 'collections', ['gen0', 'gen1', 'gen2']));
+      }
+      const heapSeries = this.def.series.find((se) => se.key === 'gcHeapMB');
+      if (heapSeries) { heapSeries.label = SessionAnalysis.gcLabel('heap', SessionAnalysis.semanticsOf(view, 'heap', ['gcHeapMB'])); }
+      this.el.querySelector('h2').textContent = `${this.def.title}${this.def.unit ? ` (${this.def.unit})` : ''}`;
       const has = view.some((s) => this.def.series.some((se) => s[se.key] !== null && s[se.key] !== undefined));
       this.el.hidden = !has;
       const last = view[view.length - 1];
@@ -257,19 +266,11 @@
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.beginPath();
-      let pen = false;
-      for (const s of view) {
-        const v = s[se.key];
-        if (v === null || v === undefined) {
-          pen = false;
-          continue;
-        }
-        if (pen) {
-          ctx.lineTo(x(s.time), y(v));
-        } else {
-          ctx.moveTo(x(s.time), y(v));
-          pen = true;
-        }
+      for (const points of SessionAnalysis.segments(view, se.key, refreshMs)) {
+        points.forEach((s, index) => {
+          if (index === 0) { ctx.moveTo(x(s.time), y(s[se.key])); }
+          else { ctx.lineTo(x(s.time), y(s[se.key])); }
+        });
       }
       ctx.stroke();
     });
@@ -342,27 +343,7 @@
 
   /** Contiguous intervals where `pred` holds, with the peak of `peakKey`. */
   function intervals(view, pred, peakKey) {
-    const out = [];
-    let cur = null;
-    for (let i = 0; i < view.length; i++) {
-      const s = view[i];
-      const end = i + 1 < view.length ? view[i + 1].time : s.time + refreshMs;
-      if (!pred(s)) {
-        cur = null;
-        continue;
-      }
-      if (!cur) {
-        cur = { from: s.time, to: end, peak: -Infinity, peakAt: s.time };
-        out.push(cur);
-      }
-      cur.to = end;
-      const v = s[peakKey];
-      if (has(v) && v > cur.peak) {
-        cur.peak = v;
-        cur.peakAt = s.time;
-      }
-    }
-    return out;
+    return SessionAnalysis.intervals(view, pred, peakKey, refreshMs);
   }
 
   // ---------- Timeline: CPU / GC / Memory lanes, markers and interval selection ----------
@@ -489,14 +470,11 @@
       ctx.lineWidth = 1.5;
       ctx.lineJoin = 'round';
       ctx.beginPath();
-      let pen = false;
-      for (const s of all) {
-        if (!has(s.cpuPercent)) {
-          pen = false;
-          continue;
-        }
-        pen ? ctx.lineTo(x(s.time), y(s.cpuPercent)) : ctx.moveTo(x(s.time), y(s.cpuPercent));
-        pen = true;
+      for (const points of SessionAnalysis.segments(all, 'cpuPercent', refreshMs)) {
+        points.forEach((s, index) => {
+          if (index === 0) { ctx.moveTo(x(s.time), y(s.cpuPercent)); }
+          else { ctx.lineTo(x(s.time), y(s.cpuPercent)); }
+        });
       }
       ctx.stroke();
     }
@@ -513,7 +491,7 @@
         if (!has(s.gcTotal) || s.gcTotal <= 0) {
           continue;
         }
-        const next = i + 1 < all.length ? all[i + 1].time : s.time + refreshMs;
+        const next = SessionAnalysis.sampleEnd(all, i, refreshMs);
         const a = x(s.time);
         const bw = Math.max(1, x(next) - a - (slot > 3 ? 1 : 0));
         const bh = Math.max(1, (s.gcTotal / yMax) * (bot - top));
@@ -534,8 +512,7 @@
         hLine(y(step * i));
         rightLabel(nf(step * i, tickDigitsFor(step)), y(step * i));
       }
-      const pts = all.filter((s) => has(s.workingSetMB));
-      if (pts.length) {
+      for (const pts of SessionAnalysis.segments(all, 'workingSetMB', refreshMs)) {
         const grad = ctx.createLinearGradient(0, top, 0, bot);
         grad.addColorStop(0, col.mem);
         grad.addColorStop(1, 'transparent');
@@ -624,7 +601,7 @@
         `<div class="t">${timeFmt(s.time)}</div>` +
           `<div class="row">CPU<b>${nf(s.cpuPercent, 1)} %</b></div>` +
           `<div class="row">GC<b>${nf(s.gcTotal, 1)} /s</b></div>` +
-          `<div class="row">Time in GC<b>${nf(s.gcPausePercent, 2)} %</b></div>` +
+          `<div class="row">${SessionAnalysis.gcLabel('pause', s.gcSemantics?.pause || 'unknown')}<b>${nf(s.gcPausePercent, 2)} %</b></div>` +
           `<div class="row">Working set<b>${fmtMB(s.workingSetMB)}</b></div>` +
           flags,
         ctx.canvas,
@@ -779,7 +756,7 @@
     const t = thresholds;
     $('timelineLegend').innerHTML =
       `<span><i class="sw sw-hot"></i>Performance hotspot (CPU ≥ ${t.hotspotCpuPercent}%)</span>` +
-      `<span><i class="sw sw-frz"></i>Possible freeze (GC pause ≥ ${t.freezeGcPausePercent}% or lock contention ≥ ${t.freezeLockContentionsPerSecond}/s)</span>` +
+      `<span><i class="sw sw-frz"></i>Possible freeze (reported GC time ≥ ${t.freezeGcPausePercent}% or lock contention ≥ ${t.freezeLockContentionsPerSecond}/s)</span>` +
       `<span><i class="bar sw sw-gc dim"></i>GC collections/s</span>` +
       `<span><i class="bar sw sw-gc"></i>High GC activity (≥ ${t.highGcCollectionsPerSecond}/s)</span>` +
       `<span><i class="sw sw-mem"></i>Working set</span>`;
@@ -787,132 +764,9 @@
 
   // ---------- Interval analysis ----------
   function computeSummary(view) {
-    if (!view.length) {
-      return null;
-    }
-    const dtMax = (refreshMs * 3) / 1000;
-    const dts = view.map((s, i) => {
-      const d = i + 1 < view.length ? (view[i + 1].time - s.time) / 1000 : refreshMs / 1000;
-      return Math.min(Math.max(d, refreshMs / 2000), dtMax);
-    });
-    const integrate = (k) => {
-      let total = 0;
-      let any = false;
-      view.forEach((s, i) => {
-        if (has(s[k])) {
-          total += s[k] * dts[i];
-          any = true;
-        }
-      });
-      return any ? total : null;
-    };
-    const stats = (k) => {
-      const v = view.map((s) => s[k]).filter(has);
-      if (!v.length) {
-        return null;
-      }
-      return { min: Math.min(...v), max: Math.max(...v), avg: v.reduce((a, b) => a + b, 0) / v.length, first: v[0], last: v[v.length - 1] };
-    };
-    const from = view[0].time;
-    const to = view[view.length - 1].time + dts[dts.length - 1] * 1000;
-    const hot = intervals(view, isHotspot, 'cpuPercent');
-    const frz = intervals(view, isFreeze, 'gcPausePercent');
-    const hgc = intervals(view, isHighGc, 'gcTotal');
-    const secs = (list) => list.reduce((a, iv) => a + (iv.to - iv.from) / 1000, 0);
-    const pause = integrate('gcPausePercent');
-    const strip = (list) => list.map((iv) => ({ from: new Date(iv.from).toISOString(), to: new Date(iv.to).toISOString(), seconds: (iv.to - iv.from) / 1000, peak: iv.peak, peakAt: new Date(iv.peakAt).toISOString() }));
-    return {
-      from, to,
-      durationSeconds: (to - from) / 1000,
-      samples: view.length,
-      cpuPercent: stats('cpuPercent'),
-      memoryPercent: stats('memPercent'),
-      workingSetMB: stats('workingSetMB'),
-      gcHeapMB: stats('gcHeapMB'),
-      gcCollectionsPerSecond: stats('gcTotal'),
-      gcCollections: { gen0: integrate('gen0'), gen1: integrate('gen1'), gen2: integrate('gen2') },
-      gcPauseSeconds: pause === null ? null : pause / 100,
-      allocatedMB: integrate('allocMBps'),
-      exceptions: integrate('exceptions'),
-      lockContentions: integrate('lockContentions'),
-      hotspots: { count: hot.length, seconds: secs(hot), intervals: hot },
-      freezes: { count: frz.length, seconds: secs(frz), longestSeconds: frz.reduce((m, iv) => Math.max(m, (iv.to - iv.from) / 1000), 0), intervals: frz },
-      highGc: { count: hgc.length, seconds: secs(hgc), intervals: hgc },
-      thresholds: { ...thresholds },
-      _strip: strip,
-    };
+    return SessionAnalysis.computeSummary(view, refreshMs / 1000, thresholds);
   }
-
-  /** Summary in a JSON-friendly shape (ISO dates) for the export. */
-  function summaryForExport(S) {
-    if (!S) {
-      return undefined;
-    }
-    const { _strip, ...rest } = S;
-    return {
-      ...rest,
-      from: new Date(S.from).toISOString(),
-      to: new Date(S.to).toISOString(),
-      hotspots: { ...S.hotspots, intervals: _strip(S.hotspots.intervals) },
-      freezes: { ...S.freezes, intervals: _strip(S.freezes.intervals) },
-      highGc: { ...S.highGc, intervals: _strip(S.highGc.intervals) },
-      findings: findings(S).map((f) => ({ kind: f.kind, text: f.text })),
-    };
-  }
-
-  function findings(S) {
-    const out = [];
-    const add = (kind, text) => out.push({ kind, text });
-    const t = S.thresholds;
-    if (S.hotspots.count) {
-      const top = S.hotspots.intervals.reduce((a, b) => (b.peak > a.peak ? b : a));
-      add('warning', `${plural(S.hotspots.count, 'performance hotspot')} (CPU ≥ ${t.hotspotCpuPercent}%) lasting ${fmtDur(S.hotspots.seconds)} in total; peak ${nf(top.peak, 1)}% at ${timeFmt(top.peakAt)}.`);
-    }
-    if (S.freezes.count) {
-      add('warning', `${plural(S.freezes.count, 'possible freeze')} (GC pause ≥ ${t.freezeGcPausePercent}% or lock contention ≥ ${t.freezeLockContentionsPerSecond}/s); longest ${fmtDur(S.freezes.longestSeconds)}.`);
-    }
-    if (S.highGc.count) {
-      const share = (S.highGc.seconds / S.durationSeconds) * 100;
-      add('warning', `High GC activity (≥ ${t.highGcCollectionsPerSecond} collections/s) for ${fmtDur(S.highGc.seconds)} (${nf(share, 0)}% of the interval); average ${nf(S.gcCollectionsPerSecond?.avg, 1)} collections/s.`);
-    }
-    const gen2 = S.gcCollections.gen2;
-    if (has(gen2) && gen2 >= 0.5) {
-      const perMin = gen2 / (S.durationSeconds / 60);
-      add(perMin > 1 ? 'warning' : 'info', `${plural(gen2, 'gen 2 (full) collection')} (${nf(perMin, 1)}/min).`);
-    }
-    if (has(S.gcPauseSeconds) && S.durationSeconds > 0) {
-      const pct = (S.gcPauseSeconds / S.durationSeconds) * 100;
-      if (pct >= 10) {
-        add('warning', `The process spent ${nf(pct, 1)}% of the interval paused in GC (${fmtDur(S.gcPauseSeconds)}).`);
-      }
-    }
-    if (S.workingSetMB) {
-      const d = S.workingSetMB.last - S.workingSetMB.first;
-      const perMin = S.durationSeconds > 0 ? d / (S.durationSeconds / 60) : 0;
-      if (d > 50 && perMin > 10 && S.durationSeconds >= 30) {
-        add('warning', `Working set grew by ${fmtMB(d)} (${nf(perMin, 1)} MB/min) — check for a memory leak.`);
-      } else {
-        add('info', `Working set ${fmtMB(S.workingSetMB.first)} → ${fmtMB(S.workingSetMB.last)} (${d >= 0 ? '+' : '−'}${fmtMB(Math.abs(d))}), peak ${fmtMB(S.workingSetMB.max)}.`);
-      }
-    }
-    if (S.gcHeapMB) {
-      const d = S.gcHeapMB.last - S.gcHeapMB.first;
-      if (d > 50 && S.durationSeconds >= 30) {
-        add('warning', `GC heap grew by ${fmtMB(d)} (${fmtMB(S.gcHeapMB.first)} → ${fmtMB(S.gcHeapMB.last)}) — objects are surviving collections.`);
-      }
-    }
-    if (has(S.exceptions) && S.exceptions >= 0.5) {
-      const rate = S.exceptions / S.durationSeconds;
-      add(rate >= 100 ? 'warning' : 'info', `${plural(S.exceptions, 'exception')} thrown (${nf(rate, 1)}/s).`);
-    }
-    if (has(S.lockContentions) && S.lockContentions >= 0.5) {
-      add('info', `${plural(S.lockContentions, 'lock contention')} (${nf(S.lockContentions / S.durationSeconds, 1)}/s).`);
-    }
-    if (!out.some((f) => f.kind === 'warning')) {
-      out.unshift({ kind: 'ok', text: 'No performance hotspots, possible freezes or high GC activity in this interval.' });
-    }
-    return out;
-  }
+  const findings = SessionAnalysis.findings;
 
   function renderAnalysis(view) {
     const bar = $('analysisBar');
@@ -939,21 +793,21 @@
       .map((f) => `<li class="${f.kind}"><span class="ico" aria-hidden="true">${icon[f.kind]}</span><span class="kind">${kindLabel[f.kind]}</span><span>${escapeHtml(f.text)}</span></li>`)
       .join('');
     const g = S.gcCollections;
-    const gcTotal = [g.gen0, g.gen1, g.gen2].filter(has).reduce((a, b) => a + b, 0);
+    const gcTotal = S.gcCollectionsTotal;
     const card = (label, value, sub) => `<div class="card"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub || ''}</div></div>`;
     $('summary').innerHTML = [
-      card('Duration', fmtDur(S.durationSeconds), `${S.samples} samples`),
+      card('Duration', fmtDur(S.durationSeconds), `${S.samples} samples · ${fmtDur(S.observedSeconds)} observed · ${fmtDur(S.missingSeconds)} without data`),
       ...(processStartedAt ? [card('Process age', fmtUptime(S.from - processStartedAt), `at interval start · ${fmtUptime(S.to - processStartedAt)} at end`)] : []),
       card('CPU (avg)', S.cpuPercent ? `${nf(S.cpuPercent.avg, 1)} %` : '—', S.cpuPercent ? `max ${nf(S.cpuPercent.max, 1)} % · ${plural(S.hotspots.count, 'hotspot')}` : ''),
       card('Working set', S.workingSetMB ? fmtMB(S.workingSetMB.last) : '—', S.workingSetMB ? `start ${fmtMB(S.workingSetMB.first)} · peak ${fmtMB(S.workingSetMB.max)}` : ''),
       card('Memory (% of system)', S.memoryPercent ? `${nf(S.memoryPercent.last, 2)} %` : '—', S.memoryPercent ? `max ${nf(S.memoryPercent.max, 2)} %` : ''),
-      card('GC heap', S.gcHeapMB ? fmtMB(S.gcHeapMB.last) : '—', S.gcHeapMB ? `start ${fmtMB(S.gcHeapMB.first)} · peak ${fmtMB(S.gcHeapMB.max)}` : ''),
-      card('GC collections', nf(gcTotal, 0), `gen0 ${nf(g.gen0, 0)} · gen1 ${nf(g.gen1, 0)} · gen2 ${nf(g.gen2, 0)}`),
-      card('Paused in GC', has(S.gcPauseSeconds) ? fmtDur(S.gcPauseSeconds) : '—', has(S.gcPauseSeconds) ? `${nf((S.gcPauseSeconds / S.durationSeconds) * 100, 2)} % of the interval` : ''),
-      card('Allocated', fmtMB(S.allocatedMB), has(S.allocatedMB) ? `${nf(S.allocatedMB / S.durationSeconds, 1)} MB/s` : ''),
+      card(SessionAnalysis.gcLabel('heap', S.gcSemantics.heap), S.gcHeapMB ? fmtMB(S.gcHeapMB.last) : '—', S.gcHeapMB ? `start ${fmtMB(S.gcHeapMB.first)} · peak ${fmtMB(S.gcHeapMB.max)}` : ''),
+      card('GC collections', nf(gcTotal, 0), `${S.gcSemantics.collections} · gen0 ${nf(g.gen0, 0)} · gen1 ${nf(g.gen1, 0)} · gen2 ${nf(g.gen2, 0)}`),
+      card('Paused in GC', has(S.gcPauseSeconds) ? fmtDur(S.gcPauseSeconds) : '—', has(S.gcPauseSeconds) ? `${nf((S.gcPauseSeconds / S.coverageSeconds.gcPausePercent) * 100, 2)} % of observed GC samples` : SessionAnalysis.gcLabel('pause', S.gcSemantics.pause)),
+      card('Allocated', fmtMB(S.allocatedMB), has(S.allocatedMB) ? `${nf(S.allocatedMB / S.coverageSeconds.allocMBps, 1)} MB/s` : ''),
       card('Possible freezes', nf(S.freezes.count, 0), S.freezes.count ? `longest ${fmtDur(S.freezes.longestSeconds)}` : ''),
-      card('Exceptions', nf(S.exceptions, 0), has(S.exceptions) ? `${nf(S.exceptions / S.durationSeconds, 1)}/s` : ''),
-      card('Lock contentions', nf(S.lockContentions, 0), has(S.lockContentions) ? `${nf(S.lockContentions / S.durationSeconds, 1)}/s` : ''),
+      card('Exceptions', nf(S.exceptions, 0), has(S.exceptions) ? `${nf(S.exceptions / S.coverageSeconds.exceptions, 1)}/s` : ''),
+      card('Lock contentions', nf(S.lockContentions, 0), has(S.lockContentions) ? `${nf(S.lockContentions / S.coverageSeconds.lockContentions, 1)}/s` : ''),
     ].join('');
   }
 
@@ -1045,25 +899,38 @@
   }
   function scopeLabel() {
     const { range } = exportScope();
-    return range ? `interval ${timeFmt(range.from)} – ${timeFmt(range.to)}` : 'all data';
+    if (range) {
+      return `interval ${timeFmt(range.from)} – ${timeFmt(range.to)}`;
+    }
+    return paused ? 'paused snapshot' : sampleCount > samples.length ? 'all retained data' : 'all data';
   }
 
-  function withTotals(s) {
-    if (s.gcTotal === undefined) {
-      const parts = [s.gen0, s.gen1, s.gen2].filter(has);
-      s.gcTotal = parts.length ? parts.reduce((a, b) => a + b, 0) : null;
-    }
-    return s;
-  }
+  const withTotals = SessionAnalysis.withTotals;
 
   function renderTiles(view) {
     for (const t of TILES) {
       const el = /** @type {HTMLElement} */ (tilesEl.querySelector(`[data-key="${t.key}"]`));
-      const values = view.map((s) => s[t.key]).filter(has);
-      const last = [...view].reverse().find((s) => has(s[t.key]));
+      let tileView = view;
+      const kind = { gcHeapMB: 'heap', gcPausePercent: 'pause', gcTotal: 'collections' }[t.key];
+      if (kind) {
+        const semantics = SessionAnalysis.semanticsOf(view, kind, [t.key]);
+        el.querySelector('.label').textContent = t.key === 'gcTotal' ? `GCs (${semantics})` : SessionAnalysis.gcLabel(kind, semantics);
+        if (semantics === 'mixed') { tileView = []; }
+      }
+      const values = tileView.map((s) => s[t.key]).filter(has);
+      let weighted = 0;
+      let covered = 0;
+      tileView.forEach((s, i) => {
+        if (has(s[t.key])) {
+          const seconds = (SessionAnalysis.sampleEnd(tileView, i, refreshMs) - s.time) / 1000;
+          weighted += s[t.key] * seconds;
+          covered += seconds;
+        }
+      });
+      const last = [...tileView].reverse().find((s) => has(s[t.key]));
       /** @type {HTMLElement} */ (el.querySelector('.value')).innerHTML = last ? `${nf(last[t.key], t.digits)}<small>${t.unit}</small>` : '—';
       /** @type {HTMLElement} */ (el.querySelector('.stats')).textContent = values.length
-        ? `min ${nf(Math.min(...values), t.digits)} · avg ${nf(values.reduce((a, b) => a + b, 0) / values.length, t.digits)} · max ${nf(Math.max(...values), t.digits)}`
+        ? `min ${nf(values.reduce((a, b) => Math.min(a, b), Infinity), t.digits)} · avg ${nf(covered ? weighted / covered : null, t.digits)} · max ${nf(values.reduce((a, b) => Math.max(a, b), -Infinity), t.digits)}`
         : '';
     }
   }
@@ -1075,6 +942,8 @@
     drawTimeline();
     renderAnalysis(view);
     $('exportScope').textContent = `Scope: ${scopeLabel()}`;
+    $('historyInfo').hidden = sampleCount <= samples.length;
+    $('historyInfo').textContent = `Showing the retained history (${samples.length.toLocaleString('en-US')} samples). Earlier samples are available in the full raw CSV export from Monitoring Sessions.`;
   }
 
   // ---------- Table with all counters ----------
@@ -1149,11 +1018,19 @@
     }
   });
   $('pause').addEventListener('click', () => {
-    paused = !paused;
-    frozen = paused ? samples.slice() : null;
-    $('pause').textContent = paused ? 'Resume' : 'Pause';
-    $('pause').classList.toggle('on', paused);
-    renderAll();
+    if (paused) {
+      paused = false;
+      frozen = null;
+      vscode.postMessage({ type: 'resume' });
+      $('pause').textContent = 'Pause';
+      $('pause').classList.remove('on');
+      renderAll();
+      return;
+    }
+    // The host captures the snapshot, including samples that arrive while this request is in flight.
+    /** @type {HTMLButtonElement} */ ($('pause')).disabled = true;
+    /** @type {HTMLButtonElement} */ ($('exportBtn')).disabled = true;
+    vscode.postMessage({ type: 'pause' });
   });
   $('stop').addEventListener('click', () => vscode.postMessage({ type: 'stop' }));
   $('restart').addEventListener('click', () => vscode.postMessage({ type: 'restart' }));
@@ -1175,8 +1052,12 @@
     if (b.dataset.export === 'png') {
       vscode.postMessage({ type: 'savePng', dataUrl: exportPng(range, view), range });
     } else {
-      const analysisSummary = b.dataset.export === 'json' ? summaryForExport(computeSummary(view)) : undefined;
-      vscode.postMessage({ type: 'export', format: b.dataset.export, range, analysis: analysisSummary });
+      if (!view.length) {
+        return;
+      }
+      // Pin the exact visible samples, including 'all' and paused exports.
+      const snapshotRange = { from: view[0].time, to: view[view.length - 1].time };
+      vscode.postMessage({ type: 'export', format: b.dataset.export, range: snapshotRange, expectedSamples: view.length });
     }
   });
 
@@ -1287,6 +1168,7 @@
         }
         renderLegend();
         samples = m.samples.map(withTotals);
+        sampleCount = m.sampleCount;
         counters.clear();
         for (const c of m.counters) {
           counters.set(`${c.provider}|${c.name}`, c);
@@ -1295,10 +1177,20 @@
         setState(m.state, m.error);
         queueRender();
         break;
+      case 'paused':
+        frozen = m.samples.map(withTotals);
+        paused = true;
+        /** @type {HTMLButtonElement} */ ($('pause')).disabled = false;
+        /** @type {HTMLButtonElement} */ ($('exportBtn')).disabled = false;
+        $('pause').textContent = 'Resume';
+        $('pause').classList.add('on');
+        renderAll();
+        break;
       case 'sample':
+        sampleCount = m.sampleCount;
         samples.push(withTotals(m.derived));
-        if (samples.length > MAX_POINTS) {
-          samples.splice(0, samples.length - MAX_POINTS);
+        if (samples.length > m.retainedCount) {
+          samples.splice(0, samples.length - m.retainedCount);
         }
         for (const c of m.counters) {
           counters.set(`${c.provider}|${c.name}`, c);

@@ -1,8 +1,9 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { DotnetProcess, parseCsvLine, parseStamp, RawSample, splitCsv } from './countersCli';
-import { counterKey, DERIVED_KEYS, DERIVED_LABELS, DerivedSample, MetricDeriver } from './metrics';
+import { counterKey, DERIVED_KEYS, DERIVED_LABELS, DerivedSample, GC_SEMANTIC_COLUMNS, MetricDeriver, parseCounterName, parseGcSemantics } from './metrics';
 import type { LatestCounter } from './session';
+import { DEFAULT_THRESHOLDS, Thresholds } from '../media/sessionAnalysis';
 
 export type ImportFormat = 'raw' | 'normalized' | 'json';
 
@@ -15,6 +16,8 @@ export interface ImportedData {
   startedAt: number;
   /** Start time of the recorded process, when the export has it (JSON). */
   processStartedAt?: number;
+  refreshInterval?: number;
+  thresholds?: Thresholds;
   samples: DerivedSample[];
   latest: LatestCounter[];
   /** Original raw dotnet-counters CSV, when the file was one (enables the raw export). */
@@ -104,9 +107,12 @@ function parseRaw(file: string, text: string): ImportedData {
   samples.sort((a, b) => a.time - b.time);
   // Name exported files as "<process>-<pid>-<date>-raw.csv"; fall back to the file name.
   const m = /^(.+?)-(\d+)-\d{4}-\d{2}-\d{2}T/.exec(path.basename(file));
+  const rateIntervals = new Set(parsed.filter((p) => p.counter.type === 'Rate' && /\/\s*\d+(?:\.\d+)?\s*sec/.test(parseCounterName(p.counter.name).unit))
+    .map((p) => parseCounterName(p.counter.name).perSeconds));
   return {
     file, format: 'raw', proc: importedProc(file, m?.[1], m ? Number(m[2]) : undefined),
     startedAt: samples[0].time, samples, latest: [...latest.values()], rawCsv: text, stampToTime,
+    refreshInterval: rateIntervals.size === 1 ? [...rateIntervals][0] : undefined,
   };
 }
 
@@ -116,6 +122,10 @@ function parseNormalized(file: string, text: string): ImportedData {
   const header = splitCsv(lines[0]);
   const byLabel = new Map(Object.entries(DERIVED_LABELS).map(([k, label]) => [label, k]));
   const cols = header.map((h) => byLabel.get(h.trim()));
+  const semanticColumns = Object.entries(GC_SEMANTIC_COLUMNS).map(([key, label]) => [key, header.indexOf(label)] as const);
+  const intervalColumn = header.indexOf('Sampling interval (s)');
+  const intervals = new Set<number>();
+  let invalidInterval = intervalColumn < 0;
   const samples: DerivedSample[] = [];
   for (const line of lines.slice(1)) {
     const cells = splitCsv(line);
@@ -123,6 +133,9 @@ function parseNormalized(file: string, text: string): ImportedData {
     if (!Number.isFinite(time)) {
       continue;
     }
+    const interval = Number(cells[intervalColumn]);
+    if (Number.isFinite(interval) && interval > 0) { intervals.add(interval); }
+    else { invalidInterval = true; }
     const s = { time } as DerivedSample;
     for (const k of DERIVED_KEYS) {
       s[k] = null;
@@ -133,6 +146,8 @@ function parseNormalized(file: string, text: string): ImportedData {
         (s as unknown as Record<string, number | null>)[k] = Number.isFinite(v) ? v : null;
       }
     });
+    const semantics = parseGcSemantics(Object.fromEntries(semanticColumns.map(([key, column]) => [key, cells[column]])));
+    if (semantics) { s.gcSemantics = semantics; }
     samples.push(s);
   }
   if (!samples.length) {
@@ -143,6 +158,7 @@ function parseNormalized(file: string, text: string): ImportedData {
   return {
     file, format: 'normalized', proc: importedProc(file, m?.[1], m ? Number(m[2]) : undefined),
     startedAt: samples[0].time, samples, latest: [], stampToTime: parseStamp,
+    refreshInterval: !invalidInterval && intervals.size === 1 ? [...intervals][0] : undefined,
   };
 }
 
@@ -153,6 +169,8 @@ function parseJson(file: string, text: string): ImportedData {
     project?: string;
     startedAt?: string;
     processStartedAt?: string;
+    refreshInterval?: number;
+    analysis?: { thresholds?: Thresholds };
     samples?: Record<string, unknown>[];
     latestCounters?: LatestCounter[];
   };
@@ -167,6 +185,8 @@ function parseJson(file: string, text: string): ImportedData {
         const v = raw[k];
         s[k] = typeof v === 'number' && Number.isFinite(v) ? v : null;
       }
+      const semantics = parseGcSemantics(raw.gcSemantics);
+      if (semantics) { s.gcSemantics = semantics; }
       return s;
     })
     .filter((s) => Number.isFinite(s.time))
@@ -182,10 +202,24 @@ function parseJson(file: string, text: string): ImportedData {
     project: obj.project,
     startedAt: Number.isFinite(started) ? started : samples[0].time,
     processStartedAt: Number.isFinite(procStarted) ? procStarted : undefined,
+    refreshInterval: typeof obj.refreshInterval === 'number' && Number.isFinite(obj.refreshInterval) && obj.refreshInterval > 0 ? obj.refreshInterval : undefined,
+    thresholds: validThresholds(obj.analysis?.thresholds),
     samples,
     latest: Array.isArray(obj.latestCounters) ? obj.latestCounters : [],
     stampToTime: parseStamp,
   };
+}
+
+function validThresholds(value: Thresholds | undefined): Thresholds | undefined {
+  if (!value) {
+    return undefined;
+  }
+  for (const key of Object.keys(DEFAULT_THRESHOLDS) as (keyof Thresholds)[]) {
+    if (typeof value[key] !== 'number' || !Number.isFinite(value[key]) || value[key] <= 0) {
+      return undefined;
+    }
+  }
+  return value;
 }
 
 /** Reads a file exported by this extension (or written by `dotnet-counters collect --format csv`). */

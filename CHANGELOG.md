@@ -2,6 +2,14 @@
 
 All notable changes to this extension are documented in this file.
 
+## Unreleased
+
+- Use the same samples and analysis for the dashboard and exports, including paused snapshots and retained-history limits.
+- Exclude collection gaps from analysis and chart segments, and report observed coverage.
+- Distinguish legacy and modern GC measurements, correct collection totals and memory units, and preserve metric provenance in exports.
+- Preserve sampling intervals, JSON analysis thresholds and CSV precision; fix large imports and raw-export date filtering.
+- Increment the patch version for local builds and name their packages `<name>-<version>-local.vsix`.
+
 ## 0.1.0
 
 Initial release.
