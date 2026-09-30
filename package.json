@@ -7,7 +7,7 @@
     "color": "#141a2b",
     "theme": "dark"
   },
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "vmfventura",
   "license": "MIT",
   "repository": {
@@ -406,9 +406,10 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
+    "test": "npm run compile && node --test",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
-    "package": "vsce package --no-rewrite-relative-links --allow-missing-repository",
+    "package": "node scripts/package-local.cjs",
     "package:marketplace": "vsce package",
     "publish": "vsce publish"
   },

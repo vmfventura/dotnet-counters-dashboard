@@ -29,11 +29,14 @@ jobs:
       - name: Compile
         run: npm run compile
 
+      - name: Test
+        run: node --test
+
       - name: Build sample application
         run: dotnet build sample/LoadApp -c Release
 
       - name: Package
-        run: npm run package
+        run: npx vsce package --no-rewrite-relative-links --allow-missing-repository
 
       - name: Upload package
         uses: actions/upload-artifact@v4

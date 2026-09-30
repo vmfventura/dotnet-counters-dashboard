@@ -14,6 +14,7 @@ Thank you for your interest in improving .NET Counters Dashboard.
 ```shell
 npm install
 npm run compile        # or: npm run watch
+npm test               # session, export and shared-analysis regression tests
 ```
 
 Open the folder in VS Code and press F5 (configuration **Run Extension**) to start an Extension Development Host with the extension loaded.
@@ -32,20 +33,22 @@ The current phase is printed to the console. Press Ctrl+C to stop.
 ## Packaging
 
 ```shell
-npm run package        # local build: dotnet-counters-dashboard-<version>.vsix
+npm run package        # local build: dotnet-counters-dashboard-<version>-local.vsix
 ```
+
+Each local build increments the patch version in `package.json` and `package-lock.json`, without creating a Git commit or tag. The VSIX filename ends in `-local`; the extension manifest uses the new numeric version. CI and Marketplace release builds keep the configured version.
 
 Install a local build with:
 
 ```shell
-code --install-extension dotnet-counters-dashboard-<version>.vsix --force
+code --install-extension dotnet-counters-dashboard-<version>-local.vsix --force
 ```
 
 Reload the VS Code window after installing, so the new version replaces the one already loaded.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` compiles the extension, builds the sample application and packages the `.vsix` on every push to `main` and on every pull request. The package is available as a build artifact.
+`.github/workflows/ci.yml` compiles the extension, runs regression tests, builds the sample application and packages the `.vsix` on every push to `main` and on every pull request. The package is available as a build artifact.
 
 ## Publishing to the Visual Studio Marketplace
 

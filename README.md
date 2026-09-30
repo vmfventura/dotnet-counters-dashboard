@@ -10,7 +10,7 @@ It can also watch the projects in your workspace and start monitoring automatica
 
 ## Features
 
-- **Session timeline.** CPU, GC and memory lanes on a shared time axis, covering the whole session. Marker rows highlight performance hotspots and possible freezes; GC bars are emphasized where collection activity is high.
+- **Session timeline.** CPU, GC and memory lanes on a shared time axis, covering the retained session history. Marker rows highlight performance hotspots and possible freezes; GC bars are emphasized where collection activity is high.
 - **Time-interval analysis.** Drag on the timeline to select an interval, then analyze it. You get automatic findings (hotspots, freezes, sustained GC pressure, gen 2 collections, memory growth, exceptions) and a summary: duration, CPU average and peak, working set and GC heap at start and peak, collections per generation, time paused in GC, total allocated memory and more.
 - **Detailed charts.** CPU, system memory share, working set / GC heap / GC committed, collections per generation, GC pause time, allocation rate, thread pool and exceptions, each with hover inspection and a 1 min, 5 min, 15 min or full-session window.
 - **All counters.** A filterable table with the latest value of every counter the runtime publishes.
@@ -49,7 +49,7 @@ The monitored application can target any .NET version supported by `dotnet-count
 
 ### Timeline
 
-The timeline spans the whole session and has three lanes:
+The timeline spans the retained session history and has three lanes:
 
 | Lane | Content |
 |---|---|
@@ -71,12 +71,14 @@ An event is marked when a sample crosses the configured threshold:
 
 - Drag across the timeline to select an interval. Use the handles to resize it, drag inside it to move it, and click outside it or press Escape to clear it.
 - Select **Analyze selection**, double-click the selection or press Enter to analyze it. The stat tiles and charts switch to that interval.
-- Select **Analyze all** to analyze the entire session. The analysis keeps updating while data is collected.
+- Select **Analyze all** to analyze all retained samples. The analysis keeps updating while data is collected.
 - Select **Back to live view** to return to the live window.
 
 ### Charts
 
 Below the timeline, stat tiles show the current value together with the minimum, average and maximum over the visible window, followed by detailed charts for each metric. Hover over a chart to inspect individual samples.
+
+Analysis separates elapsed time from observed coverage. A gap is detected when consecutive timestamps are more than 1.5 sampling intervals apart. The preceding sample covers one nominal interval; the remaining time is shown as missing data. Hotspot/freeze markers, totals and rate averages exclude that missing time, and chart lines and GC bars stop at gaps. Averages use time weights over the samples available for each metric.
 
 ![Detailed charts](images/charts.png)
 
@@ -87,6 +89,10 @@ The dashboard follows the VS Code color theme by default. Use the Auto, Light an
 ### Exporting data
 
 Use **Export** in the dashboard, or **Export Data…** on a session in the **Monitoring Sessions** view. When an interval is selected or analyzed, dashboard exports are limited to it, and the export menu shows the current scope.
+
+The dashboard and normalized exports share the same retained history, limited by `dotnetCounters.maxHistoryPoints` for live sessions. A notice appears when earlier samples have been discarded. Dashboard exports capture the selected data before the save dialog opens; **Pause** keeps an exportable snapshot while collection continues. JSON analysis is calculated from exactly the exported samples and preserves the sampling interval and analysis thresholds.
+
+To export the complete raw recording, including samples outside the retained history, use **Export Data… → Raw dotnet-counters CSV** from **Monitoring Sessions**. Raw exports from the dashboard follow its current scope.
 
 | Format | Content |
 |---|---|
@@ -154,8 +160,11 @@ Session and watch actions (open, stop, export, remove, pause, resume, stop watch
 
 - **CPU** is normalized by the number of logical processors: 100% means the whole machine is busy.
 - **Memory (% of system)** is the working set divided by the total physical memory of the machine.
-- **GC heap** is the sum of all generations after the last collection.
-- **Time in GC** is the percentage of wall-clock time the process spent paused for garbage collection.
+- **Memory units** use 1024² bytes for the dashboard's MB values. Decimal MB emitted by legacy EventCounters are converted to these same binary units.
+- **GC heap** from modern Meters is the sum of all generations after the last collection, including fragmentation. The legacy EventCounter is a live managed-memory estimate. Labels distinguish these measurements; mixed sources do not produce a combined heap summary.
+- **Time in GC** from modern Meter rates describes pause time over the reporting interval. The legacy `% Time in GC since last GC` describes a different period and is shown with that label; it cannot establish total pause seconds for the selected interval.
+- **GC collections** from legacy EventCounters are inclusive: Gen0 includes higher-generation collections, so total collections use Gen0 instead of adding Gen0, Gen1 and Gen2. Modern Meter counts identify the maximum collected generation and can be summed when all generations are available.
+- **GC provenance** is preserved per sample in JSON and in extra normalized CSV columns, together with the sampling interval. Older exports without that information remain readable with unknown provenance; total pause time and total GC collections are unavailable when their meaning cannot be established.
 - **Process uptime** is read from the operating system (`Get-Process` or `Win32_Process` on Windows, `ps` on Linux and macOS).
 
 ## Known limitations
