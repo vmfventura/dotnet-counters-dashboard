@@ -365,6 +365,26 @@
     const end = all.length ? all[all.length - 1].time + refreshMs : t0;
     return { t0, t1: Math.max(end, t0 + 60000) };
   }
+  /** Where the selection lies relative to the drawn window: none, visible, partial or before/after. */
+  function selectionPlacement(sel, t0, t1) {
+    if (!sel) {
+      return 'none';
+    }
+    if (sel.to <= t0) {
+      return 'before';
+    }
+    if (sel.from >= t1) {
+      return 'after';
+    }
+    return sel.from >= t0 && sel.to <= t1 ? 'visible' : 'partial';
+  }
+  /** Pill drawn at the plot edge when the selection is entirely outside the window. */
+  function tlMarker(L, side) {
+    const gcL = L.lanes[1];
+    const w = 18;
+    const h = 36;
+    return { x: side === 'before' ? L.x0 + 3 : L.x1 - 3 - w, y: gcL.y + gcL.h / 2 - h / 2, w, h };
+  }
   function roundRect(ctx, x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y);
@@ -550,7 +570,35 @@
 
     // --- Selection: dim outside, outline, drag handles ---
     const sel = opts.selection;
-    if (sel) {
+    const place = selectionPlacement(sel, t0, t1);
+    if (place === 'before' || place === 'after') {
+      // The selection scrolled out of the window: keep an edge marker so it is not lost.
+      const m = tlMarker(L, place);
+      const tone = opts.analyzed ? cssVar('--accent') || ink : ink2;
+      const edge = place === 'before' ? L.x0 : L.x1 - 3;
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = tone;
+      ctx.fillRect(edge, 0, 3, L.bottom);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = tone;
+      roundRect(ctx, m.x, m.y, m.w, m.h, 7);
+      ctx.fill();
+      const dir = place === 'before' ? -1 : 1;
+      const cx = m.x + m.w / 2;
+      const cy = m.y + m.h / 2;
+      ctx.strokeStyle = cssVar('--tl-handle-ink') || '#fff';
+      ctx.lineWidth = 1.8;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx - dir * 2, cy - 5);
+      ctx.lineTo(cx + dir * 2.5, cy);
+      ctx.lineTo(cx - dir * 2, cy + 5);
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (place === 'visible' || place === 'partial') {
       const a = Math.max(L.x0, x(sel.from));
       const b = Math.min(L.x1, x(sel.to));
       ctx.save();
@@ -566,7 +614,11 @@
       ctx.stroke();
       ctx.globalAlpha = 1;
       const hy = gcL.y + gcL.h / 2;
-      for (const [hx, dir] of [[a, -1], [b, 1]]) {
+      for (const [time, dir] of [[sel.from, -1], [sel.to, 1]]) {
+        if (time < t0 || time > t1) {
+          continue;
+        }
+        const hx = x(time);
         ctx.fillStyle = cssVar('--tl-handle') || ink;
         roundRect(ctx, hx - 7, hy - 16, 14, 32, 7);
         ctx.fill();
@@ -619,34 +671,44 @@
     const c = sizeCanvas(tl);
     if (c) {
       const analyzed = !!analysis && !analysis.live && !!selection && analysis.from === selection.from && analysis.to === selection.to;
-      renderTimeline(c.ctx, c.w, data(), { hoverX: drag ? null : tlHoverX, selection, analyzed });
+      renderTimeline(c.ctx, c.w, windowSamples(), { hoverX: drag ? null : tlHoverX, selection, analyzed });
     }
+    updateSelectionChip();
   }
   new ResizeObserver(() => drawTimeline()).observe(tl);
 
   function tlGeom() {
     const L = tlLayout(tl.clientWidth);
-    const { t0, t1 } = tlSpan(data());
+    const { t0, t1 } = tlSpan(windowSamples());
     return {
       L, t0, t1,
       timeAt: (px) => t0 + Math.min(1, Math.max(0, (px - L.x0) / L.pw)) * (t1 - t0),
       xAt: (t) => L.x0 + ((t - t0) / (t1 - t0)) * L.pw,
     };
   }
-  function hitTest(px) {
+  function hitTest(px, py) {
     if (!selection) {
       return 'new';
     }
     const g = tlGeom();
+    const place = selectionPlacement(selection, g.t0, g.t1);
+    if (place === 'before' || place === 'after') {
+      const m = tlMarker(g.L, place);
+      const hit = px >= m.x - 4 && px <= m.x + m.w + 4 && has(py) && py >= m.y - 6 && py <= m.y + m.h + 6;
+      return hit ? 'reveal' : 'new';
+    }
+    if (px < g.L.x0 - 8 || px > g.L.x1 + 8) {
+      return 'new';
+    }
     const a = g.xAt(selection.from);
     const b = g.xAt(selection.to);
-    if (Math.abs(px - a) <= 8) {
+    if (selection.from >= g.t0 && selection.from <= g.t1 && Math.abs(px - a) <= 8) {
       return 'left';
     }
-    if (Math.abs(px - b) <= 8) {
+    if (selection.to >= g.t0 && selection.to <= g.t1 && Math.abs(px - b) <= 8) {
       return 'right';
     }
-    return px > a && px < b ? 'move' : 'new';
+    return px >= g.L.x0 && px <= g.L.x1 && px > a && px < b ? 'move' : 'new';
   }
 
   tl.addEventListener('pointerdown', (e) => {
@@ -659,17 +721,32 @@
       /* synthetic events have no active pointer */
     }
     const g = tlGeom();
-    drag = { mode: hitTest(e.offsetX), startX: e.offsetX, startT: g.timeAt(e.offsetX), orig: selection ? { ...selection } : null, moved: false };
+    const mode = hitTest(e.offsetX, e.offsetY);
+    if (mode === 'reveal') {
+      revealSelection();
+      return;
+    }
+    drag = { mode, startX: e.offsetX, startT: g.timeAt(e.offsetX), orig: selection ? { ...selection } : null, moved: false };
     hideTooltip();
   });
   tl.addEventListener('pointermove', (e) => {
     const g = tlGeom();
     if (!drag) {
-      tlHoverX = e.offsetX;
-      const mode = hitTest(e.offsetX);
+      const mode = hitTest(e.offsetX, e.offsetY);
+      tlHoverX = mode === 'reveal' ? null : e.offsetX;
       tl.classList.toggle('resize', mode === 'left' || mode === 'right');
       tl.classList.toggle('grab', mode === 'move');
+      tl.classList.toggle('reveal', mode === 'reveal');
       drawTimeline();
+      if (mode === 'reveal' && selection) {
+        showTooltip(
+          `<div class="t">Selection outside the window</div>` +
+            `<div class="row">${timeFmt(selection.from)} – ${timeFmt(selection.to)}<b>${fmtDur((selection.to - selection.from) / 1000)}</b></div>` +
+            `<div class="row">Click to show it</div>`,
+          tl,
+          e.offsetX,
+        );
+      }
       return;
     }
     if (Math.abs(e.offsetX - drag.startX) > 3) {
@@ -703,9 +780,16 @@
     } else if (selection && selection.to - selection.from < refreshMs) {
       selection = null;
     }
+    const moved = drag.moved;
     drag = null;
-    updateSelectionUi();
-    drawTimeline();
+    if (!selection) {
+      clearSelection();
+    } else if (moved) {
+      analyzeSelection();
+    } else {
+      updateSelectionUi();
+      drawTimeline();
+    }
   });
   tl.addEventListener('pointerleave', () => {
     tlHoverX = null;
@@ -721,13 +805,52 @@
     }
   });
 
+  /** Placement of the selection in the current timeline window. */
+  function selectionState() {
+    const { t0, t1 } = tlSpan(windowSamples());
+    const place = selectionPlacement(selection, t0, t1);
+    return place === 'before' || place === 'after' ? 'outside' : place;
+  }
+  /** The chip keeps the selection visible in the toolbar, even after it leaves the window. */
+  function updateSelectionChip() {
+    const chip = $('selChip');
+    const state = selectionState();
+    chip.hidden = state === 'none';
+    chip.dataset.state = state === 'none' ? 'visible' : state;
+    if (!selection) {
+      return;
+    }
+    const where = state === 'outside' ? ' · outside the window' : state === 'partial' ? ' · partly outside the window' : '';
+    $('selChipText').textContent = `${timeFmt(selection.from)} – ${timeFmt(selection.to)} · ${fmtDur((selection.to - selection.from) / 1000)}${where}`;
+    $('revealSel').hidden = state === 'visible' || !!drag;
+  }
   function updateSelectionUi() {
     /** @type {HTMLButtonElement} */ ($('analyzeSel')).disabled = !selection;
     /** @type {HTMLButtonElement} */ ($('clearSel')).disabled = !selection && !analysis;
-    $('selInfo').textContent = selection
-      ? `Selected ${timeFmt(selection.from)} – ${timeFmt(selection.to)} (${fmtDur((selection.to - selection.from) / 1000)}) · double-click or Enter to analyze`
-      : 'Drag on the timeline to select a time interval';
+    $('selInfo').textContent = drag && selection
+      ? 'Release to analyze automatically'
+      : selection
+        ? ''
+        : 'Drag on the timeline to select and automatically analyze a time interval';
+    updateSelectionChip();
     $('exportScope').textContent = `Scope: ${scopeLabel()}`;
+  }
+  /** Switches to the narrowest time window that contains the whole selection, keeping the analysis. */
+  function revealSelection() {
+    if (!selection) {
+      return;
+    }
+    if (!rangeSeconds || !data().length) {
+      return; // "All" already shows every retained sample
+    }
+    const wider = [60, 300, 900].filter((seconds) => seconds > rangeSeconds);
+    rangeSeconds = wider.find((seconds) => windowSamples(seconds)[0].time <= selection.from) || 0;
+    const next = rangeSeconds;
+    $('range').querySelectorAll('button').forEach((b) => b.classList.toggle('on', Number(b.dataset.range) === next));
+    hideTooltip();
+    tl.classList.remove('reveal');
+    updateSelectionUi();
+    renderAll();
   }
   function setAnalysis(a) {
     analysis = a;
@@ -750,6 +873,8 @@
   });
   $('analyzeSel').addEventListener('click', analyzeSelection);
   $('clearSel').addEventListener('click', clearSelection);
+  $('chipClear').addEventListener('click', clearSelection);
+  $('revealSel').addEventListener('click', revealSelection);
   $('backToLive').addEventListener('click', clearSelection);
 
   function renderLegend() {
@@ -781,7 +906,7 @@
     sec.hidden = false;
     $('analysisText').textContent = analysis.live
       ? `Analyzing all data (live)${S ? ` · ${timeFmt(S.from)} – ${timeFmt(S.to)} · ${fmtDur(S.durationSeconds)} · ${S.samples} samples` : ''}`
-      : `Analyzing selected interval ${timeFmt(analysis.from)} – ${timeFmt(analysis.to)}${S ? ` · ${fmtDur(S.durationSeconds)} · ${S.samples} samples` : ''}`;
+      : `Analyzing selected interval ${timeFmt(analysis.from)} – ${timeFmt(analysis.to)}${S ? ` · ${fmtDur(S.durationSeconds)} · ${S.samples} samples` : ''}${selectionState() === 'outside' ? ' · outside the current window' : ''}`;
     if (!S) {
       $('findings').innerHTML = '<li class="info"><span class="ico">i</span><span>No samples in this interval.</span></li>';
       $('summary').innerHTML = '';
@@ -875,20 +1000,25 @@
     }
   }, 1000);
 
-  function visibleSamples() {
+  // The timeline keeps the chosen window while charts zoom into the analysis.
+  function windowSamples(seconds = rangeSeconds) {
     const all = data();
-    if (analysis) {
-      return all.filter((s) => s.time >= analysis.from && s.time <= analysis.to);
-    }
-    if (!rangeSeconds || !all.length) {
+    if (!seconds || !all.length) {
       return all;
     }
-    const from = all[all.length - 1].time - rangeSeconds * 1000;
+    const from = all[all.length - 1].time - seconds * 1000;
     let i = all.length - 1;
     while (i > 0 && all[i - 1].time >= from) {
       i--;
     }
     return all.slice(i);
+  }
+
+  function visibleSamples() {
+    if (analysis) {
+      return data().filter((s) => s.time >= analysis.from && s.time <= analysis.to);
+    }
+    return windowSamples();
   }
 
   /** Time range + samples used by the export (analyzed interval, else the drawn selection, else everything). */
