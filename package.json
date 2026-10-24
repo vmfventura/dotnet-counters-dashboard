@@ -410,13 +410,12 @@
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
     "package": "node scripts/package-local.cjs",
-    "package:marketplace": "vsce package",
-    "publish": "vsce publish"
+    "package:marketplace": "vsce package"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^3.2.0",
-    "typescript": "^5.4.0"
+    "@vscode/vsce": "^4.0.0",
+    "typescript": "^7.0.2"
   }
 }

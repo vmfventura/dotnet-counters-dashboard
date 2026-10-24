@@ -32,6 +32,8 @@ The current phase is printed to the console. Press Ctrl+C to stop.
 
 ## Packaging
 
+Packaging uses `@vscode/vsce`, which requires Node.js 22 or later.
+
 ```shell
 npm run package        # local build: dotnet-counters-dashboard-<version>-local.vsix
 ```
@@ -52,14 +54,12 @@ Reload the VS Code window after installing, so the new version replaces the one 
 
 ## Publishing to the Visual Studio Marketplace
 
-Releases are published automatically by `.github/workflows/release.yml` when a version tag is pushed.
+The extension is published manually. `.github/workflows/release.yml` packages it and creates a GitHub release when a version tag is pushed; the `.vsix` is then uploaded to the Marketplace by hand.
 
 ### One-time setup
 
 1. Create a publisher at <https://marketplace.visualstudio.com/manage> and set its ID in the `publisher` field of `package.json`.
-2. Create a personal access token in Azure DevOps (<https://dev.azure.com>, **User settings > Personal access tokens**) with **Organization: All accessible organizations** and the **Marketplace (Manage)** scope.
-3. In the GitHub repository, open **Settings > Environments**, create an environment named `marketplace`, and add the token as an environment secret named `VSCE_PAT`. Optionally, add required reviewers to the environment so each release must be approved.
-4. Optionally, add the repository to `package.json`, so the Marketplace page links to it:
+2. Optionally, add the repository to `package.json`, so the Marketplace page links to it:
 
    ```json
    "repository": { "type": "git", "url": "https://github.com/<owner>/<repo>.git" },
@@ -77,9 +77,9 @@ Releases are published automatically by `.github/workflows/release.yml` when a v
    git push origin v0.1.0
    ```
 
-The workflow checks that the tag matches `package.json`, packages the extension with README images and links pointing to that tag, publishes it to the Marketplace, and creates a GitHub release with the `.vsix` attached. If the `VSCE_PAT` secret is not configured, the Marketplace step is skipped: upload the `.vsix` from the GitHub release at <https://marketplace.visualstudio.com/manage> instead. The `images/` folder is excluded from the package, so it must be committed to the repository.
+3. Download the `.vsix` from the GitHub release and upload it at <https://marketplace.visualstudio.com/manage> (**⋯ > Update** on the extension).
 
-To publish manually instead, sign in with `npx vsce login <publisher-id>` and run `npm run publish` (this requires the `repository` field), or upload the `.vsix` at <https://marketplace.visualstudio.com/manage>.
+The workflow checks that the tag matches `package.json`, packages the extension with README images and links pointing to that tag, and creates a GitHub release with the `.vsix` attached. The `images/` folder is excluded from the package, so it must be committed to the repository.
 
 ## README images
 

@@ -1,9 +1,11 @@
 name: Release
 
-# Publishes the extension when a version tag is pushed, e.g.:
+# Packages the extension and creates a GitHub release when a version tag is pushed, e.g.:
 #   git tag v0.1.0
 #   git push origin v0.1.0
 # The tag must match the "version" field in package.json.
+# Publishing to the Marketplace is manual: upload the .vsix from the release at
+# https://marketplace.visualstudio.com/manage/publishers/vmfventura.
 
 on:
   push:
@@ -13,19 +15,14 @@ permissions:
   contents: write # create the GitHub release
 
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
-    environment: marketplace
-    env:
-      # Optional: without it the release is still created and the .vsix can be uploaded manually
-      # at https://marketplace.visualstudio.com/manage.
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -47,17 +44,6 @@ jobs:
           --baseContentUrl "https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME"
           --baseImagesUrl "https://github.com/$GITHUB_REPOSITORY/raw/$GITHUB_REF_NAME"
           --out "dotnet-counters-dashboard-$VERSION.vsix"
-
-      - name: Publish to the Visual Studio Marketplace
-        if: env.VSCE_PAT != ''
-        run: npx vsce publish --packagePath "dotnet-counters-dashboard-$VERSION.vsix"
-
-      - name: Marketplace publishing skipped
-        if: env.VSCE_PAT == ''
-        run: >
-          echo "::notice::VSCE_PAT is not set, so the extension was not published.
-          Upload dotnet-counters-dashboard-$VERSION.vsix from the GitHub release at
-          https://marketplace.visualstudio.com/manage/publishers/vmfventura"
 
       - name: Create GitHub release
         run: >
