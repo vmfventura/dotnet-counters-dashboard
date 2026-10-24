@@ -10,8 +10,8 @@ It can also watch the projects in your workspace and start monitoring automatica
 
 ## Features
 
-- **Session timeline.** CPU, GC and memory lanes on a shared time axis, covering the retained session history. Marker rows highlight performance hotspots and possible freezes; GC bars are emphasized where collection activity is high.
-- **Time-interval analysis.** Drag on the timeline to select an interval, then analyze it. You get automatic findings (hotspots, freezes, sustained GC pressure, gen 2 collections, memory growth, exceptions) and a summary: duration, CPU average and peak, working set and GC heap at start and peak, collections per generation, time paused in GC, total allocated memory and more.
+- **Session timeline.** CPU, GC and memory lanes on a shared time axis, showing the selected 1 min, 5 min, 15 min or full-session window of retained history. Marker rows highlight performance hotspots and possible freezes; GC bars are emphasized where collection activity is high.
+- **Time-interval analysis.** Drag on the timeline to select an interval and release to analyze it automatically. You get automatic findings (hotspots, freezes, sustained GC pressure, gen 2 collections, memory growth, exceptions) and a summary: duration, CPU average and peak, working set and GC heap at start and peak, collections per generation, time paused in GC, total allocated memory and more.
 - **Detailed charts.** CPU, system memory share, working set / GC heap / GC committed, collections per generation, GC pause time, allocation rate, thread pool and exceptions, each with hover inspection and a 1 min, 5 min, 15 min or full-session window.
 - **All counters.** A filterable table with the latest value of every counter the runtime publishes.
 - **Project-aware.** Finds the process of a workspace project by its `AssemblyName` or project name, and waits for it to start if it is not running yet.
@@ -49,7 +49,7 @@ The monitored application can target any .NET version supported by `dotnet-count
 
 ### Timeline
 
-The timeline spans the retained session history and has three lanes:
+The timeline shows the selected 1 min, 5 min, 15 min or full-session window of retained history and has three lanes:
 
 | Lane | Content |
 |---|---|
@@ -69,8 +69,10 @@ An event is marked when a sample crosses the configured threshold:
 
 ![Interval analysis with findings and summary](images/interval-analysis.png)
 
-- Drag across the timeline to select an interval. Use the handles to resize it, drag inside it to move it, and click outside it or press Escape to clear it.
-- Select **Analyze selection**, double-click the selection or press Enter to analyze it. The stat tiles and charts switch to that interval.
+- Drag across the timeline to select an interval. Releasing the pointer automatically analyzes it and switches the stat tiles and charts to that interval.
+- Use the handles to resize the interval or drag inside it to move it; analysis updates when you release the pointer. Click outside it or press Escape to clear the selection and its analysis.
+- **Analyze selection**, double-click and Enter remain available to analyze the selection manually.
+- The selected interval is also shown as a chip next to **Clear**. When the live window moves past it, the chip reads *outside the window* and a marker appears at the edge of the timeline; select **Show** or click the marker to switch to the narrowest window that contains it. The analysis is kept.
 - Select **Analyze all** to analyze all retained samples. The analysis keeps updating while data is collected.
 - Select **Back to live view** to return to the live window.
 

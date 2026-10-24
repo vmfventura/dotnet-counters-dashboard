@@ -212,12 +212,18 @@ export class DashboardPanel implements vscode.Disposable {
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M14 2L8.5 7.5M6 6.5l3.5 3.5L7 14.5 2.5 10z"/></svg>
         Clear
       </button>
+      <span class="sel-chip" id="selChip" data-state="visible" hidden>
+        <i class="sel-dot" aria-hidden="true"></i>
+        <span id="selChipText"></span>
+        <button class="chip-btn" id="revealSel" title="Switch the time window so the selection is visible" hidden>Show</button>
+        <button class="chip-btn chip-x" id="chipClear" title="Clear the selection (Esc)" aria-label="Clear the selection">✕</button>
+      </span>
       <span class="spacer"></span>
-      <span class="hint" id="selInfo">Drag on the timeline to select a time interval</span>
+      <span class="hint" id="selInfo">Drag on the timeline to select and automatically analyze a time interval</span>
     </div>
     <div class="timeline-legend" id="timelineLegend"></div>
     <div class="hint" id="historyInfo" hidden></div>
-    <canvas id="timeline" role="img" aria-label="Timeline with CPU, GC and memory lanes. Drag to select a time interval." tabindex="0"></canvas>
+    <canvas id="timeline" role="img" aria-label="Timeline with CPU, GC and memory lanes. Drag to select a time interval and release to analyze it automatically." tabindex="0"></canvas>
   </section>
 
   <div class="analysis-bar" id="analysisBar" hidden>
