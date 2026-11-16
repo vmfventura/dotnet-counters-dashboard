@@ -308,7 +308,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
 async function safeList(): Promise<DotnetProcess[]> {
   try {
-    return await listProcesses();
+    const { processes, warning } = await listProcesses();
+    if (warning) { void vscode.window.showWarningMessage(warning); }
+    return processes;
   } catch (e) {
     await reportListError(e);
     return [];
@@ -342,7 +344,15 @@ async function pickProcess(procs: DotnetProcess[], title = 'Pick the .NET proces
  * waits (with cancellable progress) for up to `waitForProcessSeconds`.
  */
 async function monitorByName(name: string, projectDir: string | undefined, start: (p: DotnetProcess, project?: string) => unknown): Promise<void> {
-  const find = async () => (await listProcesses()).filter((p) => matchesProject(p, name, projectDir));
+  let warningShown = false;
+  const find = async () => {
+    const { processes, warning } = await listProcesses();
+    if (warning && !warningShown) {
+      warningShown = true;
+      void vscode.window.showWarningMessage(warning);
+    }
+    return processes.filter((p) => matchesProject(p, name, projectDir));
+  };
   let matches: DotnetProcess[];
   try {
     matches = await find();

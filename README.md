@@ -119,6 +119,8 @@ The **Watched Projects** view keeps a list of projects to monitor. The list is s
 
 For each watched project, the extension looks for its process in `dotnet-counters ps` at a regular interval. When the process starts, the extension attaches to it and opens the dashboard without taking focus. When the process exits, the extension waits for the next start. The dashboard of a new run replaces the one of the previous run; earlier runs remain available in **Monitoring Sessions**.
 
+On Linux, if `dotnet-counters ps` fails while reading the environment of a process that has exited, the extension falls back to visible .NET diagnostics sockets. A warning is shown because permissions, containers, custom diagnostic ports or namespaces can make this list incomplete. Collection still uses `dotnet-counters` and requires access to the target process.
+
 | State | Meaning |
 |---|---|
 | Waiting for process | The project is not running; the extension attaches as soon as it starts. |
