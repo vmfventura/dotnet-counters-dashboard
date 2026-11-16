@@ -26,6 +26,7 @@ export class ProjectWatcher implements vscode.Disposable {
   private disposed = false;
   /** Last poll error (e.g. dotnet-counters missing), shown in the tree. */
   lastError: string | undefined;
+  lastWarning: string | undefined;
   private errorShown = false;
 
   private readonly _onDidChange = new vscode.EventEmitter<void>();
@@ -114,9 +115,10 @@ export class ProjectWatcher implements vscode.Disposable {
     }
     this.polling = true;
     try {
-      const procs = await listProcesses();
-      if (this.lastError) {
+      const { processes: procs, warning } = await listProcesses();
+      if (this.lastError || this.lastWarning !== warning) {
         this.lastError = undefined;
+        this.lastWarning = warning;
         this._onDidChange.fire();
       }
       for (const t of active) {
@@ -128,6 +130,7 @@ export class ProjectWatcher implements vscode.Disposable {
       }
     } catch (e) {
       this.lastError = (e as Error).message;
+      this.lastWarning = undefined;
       this._onDidChange.fire();
       if (e instanceof ToolNotFoundError && !this.errorShown) {
         this.errorShown = true;
@@ -187,7 +190,7 @@ export class WatchItem extends vscode.TreeItem {
             : 'Waiting — the dashboard opens automatically when the process starts.'
           : 'Paused — not waiting for the process.') +
         (count ? `\n\n${count} session(s) recorded.` : '') +
-        (watcher.lastError ? `\n\n⚠ ${watcher.lastError}` : ''),
+        (watcher.lastError ? `\n\n⚠ ${watcher.lastError}` : watcher.lastWarning ? `\n\n⚠ ${watcher.lastWarning}` : ''),
     );
     this.contextValue = target.enabled ? 'watch.enabled' : 'watch.paused';
     this.command = { command: 'dotnetCounters.openWatch', title: 'Open', arguments: [this] };

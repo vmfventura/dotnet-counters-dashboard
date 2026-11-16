@@ -32,12 +32,17 @@ export class ProcessTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
 
   async getChildren(): Promise<vscode.TreeItem[]> {
     try {
-      const [procs, projects] = await Promise.all([listProcesses(), findWorkspaceProjects()]);
+      const [{ processes: procs, warning }, projects] = await Promise.all([listProcesses(), findWorkspaceProjects()]);
       this.error = undefined;
       const starts = await getProcessStartTimes(procs.map((p) => p.pid)).catch(() => new Map<number, number>());
       const items = procs.map((p) => new ProcessItem(p, projectsMatching(p, projects), starts.get(p.pid)));
       // Workspace project processes first.
-      return items.sort((a, b) => Number(!!b.project) - Number(!!a.project));
+      items.sort((a, b) => Number(!!b.project) - Number(!!a.project));
+      if (!warning) { return items; }
+      const notice = new vscode.TreeItem('Process list may be incomplete');
+      notice.iconPath = new vscode.ThemeIcon('warning');
+      notice.tooltip = warning;
+      return [notice, ...(items.length ? items : [new vscode.TreeItem('No visible .NET processes found')])];
     } catch (e) {
       this.error = (e as Error).message;
       const item = new vscode.TreeItem(e instanceof ToolNotFoundError ? 'dotnet-counters is not installed' : 'Failed to list processes');

@@ -2,6 +2,10 @@
 
 All notable changes to this extension are documented in this file.
 
+## Unreleased
+
+- On Linux, fall back to visible .NET diagnostics sockets when `dotnet-counters ps` fails reading the environment of an exited process, and warn that the list may be incomplete.
+
 ## 0.1.2
 
 - Automatically analyze timeline selections when the pointer is released after selecting, moving or resizing an interval.

@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { listLinuxProcesses } from './linuxProcesses';
 
 export interface DotnetProcess {
   pid: number;
@@ -65,8 +66,21 @@ export class ToolNotFoundError extends Error {
 }
 
 /** Lists the .NET processes visible to `dotnet-counters ps`. */
-export async function listProcesses(): Promise<DotnetProcess[]> {
-  const out = await run(['ps']);
+export async function listProcesses(): Promise<{ processes: DotnetProcess[]; warning?: string }> {
+  let out: string;
+  try {
+    out = await run(['ps']);
+  } catch (e) {
+    if (process.platform !== 'linux' || !(e instanceof Error) ||
+        !/System\.IO\.IOException: No such process\s*:\s*['"]\/proc\/\d+\/environ['"]/.test(e.message)) {
+      throw e;
+    }
+    try {
+      return { processes: await listLinuxProcesses(), warning: 'dotnet-counters ps failed; using Linux diagnostics sockets. Some processes may be missing.' };
+    } catch {
+      throw e;
+    }
+  }
   const result: DotnetProcess[] = [];
   for (const line of out.split(/\r?\n/)) {
     const m = /^\s*(\d+)\s+(\S+)\s*(.*)$/.exec(line);
@@ -81,7 +95,7 @@ export async function listProcesses(): Promise<DotnetProcess[]> {
     const [exePath, ...rest] = m[3].trim().split(/\s{2,}/);
     result.push({ pid, name: m[2], path: exePath ?? '', commandLine: rest.join(' ').trim() });
   }
-  return result.sort((a, b) => a.name.localeCompare(b.name) || a.pid - b.pid);
+  return { processes: result.sort((a, b) => a.name.localeCompare(b.name) || a.pid - b.pid) };
 }
 
 /** Splits a CSV line, honoring quotes. */
