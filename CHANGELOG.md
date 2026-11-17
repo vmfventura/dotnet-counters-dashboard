@@ -2,7 +2,7 @@
 
 All notable changes to this extension are documented in this file.
 
-## Unreleased
+## 0.1.3
 
 - On Linux, fall back to visible .NET diagnostics sockets when `dotnet-counters ps` fails reading the environment of an exited process, and warn that the list may be incomplete.
 
